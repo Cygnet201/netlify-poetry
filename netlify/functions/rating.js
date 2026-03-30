@@ -21,7 +21,11 @@ function getPool() {
 function decodeJWT(token) {
   try {
     const raw = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(Buffer.from(raw, 'base64').toString());
+    const payload = JSON.parse(Buffer.from(raw, 'base64').toString());
+    // Waline encodes just the user ID as the JWT payload
+    if (typeof payload === 'number') return { id: payload };
+    if (typeof payload === 'object' && payload !== null) return payload;
+    return null;
   } catch {
     return null;
   }
@@ -47,10 +51,7 @@ async function ensureTable(db) {
 async function isAdmin(db, user) {
   if (!user || !user.id) return false;
 
-  // Check JWT type field first
-  if (user.type === 'administrator' || user.type === 'admin') return true;
-
-  // Fallback: check database
+  // JWT only contains user ID, must check database for admin status
   const tables = ['wl_users', '"wl_Users"'];
   for (const table of tables) {
     try {
@@ -81,7 +82,7 @@ exports.handler = async (event) => {
     const db = getPool();
     await ensureTable(db);
 
-    // Extract user from JWT
+    // Extract user from JWT (payload is just the user ID number)
     const auth = (event.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const user = auth ? decodeJWT(auth) : null;
 
@@ -93,7 +94,7 @@ exports.handler = async (event) => {
           statusCode: 403, headers: CORS,
           body: JSON.stringify({
             error: 'admin only',
-            debug: { jwt_type: user ? user.type : null, user_id: user ? user.id : null }
+            debug: { user_id: user ? user.id : null }
           }),
         };
       }
