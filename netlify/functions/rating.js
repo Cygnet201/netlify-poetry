@@ -64,6 +64,40 @@ exports.handler = async (event) => {
     const auth = (event.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const user = auth ? decodeJWT(auth) : null;
 
+    // Admin: GET ?all=1 returns full stats (requires administrator role)
+    if (event.httpMethod === 'GET' && (event.queryStringParameters || {}).all) {
+      if (!user || user.type !== 'administrator') {
+        return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'admin only' }) };
+      }
+
+      const allStats = await db.query(`
+        SELECT r.poem,
+               COUNT(*)::int AS count,
+               ROUND(AVG(r.score)::numeric, 1) AS avg,
+               json_agg(json_build_object(
+                 'user_id', r.user_id,
+                 'display_name', u.display_name,
+                 'score', r.score,
+                 'updated_at', r.updated_at
+               ) ORDER BY r.updated_at DESC) AS details
+        FROM wl_rating r
+        LEFT JOIN wl_users u ON u.id = r.user_id
+        GROUP BY r.poem
+        ORDER BY count DESC
+      `);
+
+      return {
+        statusCode: 200,
+        headers: CORS,
+        body: JSON.stringify(allStats.rows.map(row => ({
+          poem: row.poem,
+          count: row.count,
+          avg: parseFloat(row.avg),
+          details: row.details,
+        }))),
+      };
+    }
+
     if (event.httpMethod === 'POST') {
       if (!user || !user.id) {
         return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: 'login required' }) };
@@ -89,7 +123,7 @@ exports.handler = async (event) => {
       );
     }
 
-    // GET or POST response: return stats
+    // GET or POST response: return stats for single poem
     const poem =
       event.httpMethod === 'GET'
         ? (event.queryStringParameters || {}).poem
