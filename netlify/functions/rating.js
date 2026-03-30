@@ -44,6 +44,27 @@ async function ensureTable(db) {
   tableReady = true;
 }
 
+async function isAdmin(db, user) {
+  if (!user || !user.id) return false;
+
+  // Check JWT type field first
+  if (user.type === 'administrator' || user.type === 'admin') return true;
+
+  // Fallback: check database
+  const tables = ['wl_users', '"wl_Users"'];
+  for (const table of tables) {
+    try {
+      const r = await db.query(
+        `SELECT "type" FROM ${table} WHERE id = $1`, [user.id]
+      );
+      if (r.rows[0]) {
+        return r.rows[0].type === 'administrator' || r.rows[0].type === 'admin';
+      }
+    } catch { /* try next table name */ }
+  }
+  return false;
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -64,10 +85,17 @@ exports.handler = async (event) => {
     const auth = (event.headers.authorization || '').replace(/^Bearer\s+/i, '');
     const user = auth ? decodeJWT(auth) : null;
 
-    // Admin: GET ?all=1 returns full stats (requires administrator role)
+    // Admin: GET ?all=1 returns full stats
     if (event.httpMethod === 'GET' && (event.queryStringParameters || {}).all) {
-      if (!user || user.type !== 'administrator') {
-        return { statusCode: 403, headers: CORS, body: JSON.stringify({ error: 'admin only' }) };
+      const admin = await isAdmin(db, user);
+      if (!admin) {
+        return {
+          statusCode: 403, headers: CORS,
+          body: JSON.stringify({
+            error: 'admin only',
+            debug: { jwt_type: user ? user.type : null, user_id: user ? user.id : null }
+          }),
+        };
       }
 
       const allStats = await db.query(`
@@ -87,8 +115,7 @@ exports.handler = async (event) => {
       `);
 
       return {
-        statusCode: 200,
-        headers: CORS,
+        statusCode: 200, headers: CORS,
         body: JSON.stringify(allStats.rows.map(row => ({
           poem: row.poem,
           count: row.count,
@@ -148,8 +175,7 @@ exports.handler = async (event) => {
     }
 
     return {
-      statusCode: 200,
-      headers: CORS,
+      statusCode: 200, headers: CORS,
       body: JSON.stringify({
         count: stats.rows[0].count || 0,
         avg: parseFloat(stats.rows[0].avg) || 0,
