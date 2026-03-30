@@ -39,11 +39,20 @@ async function ensureTable(db) {
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL,
       poem VARCHAR(500) NOT NULL,
-      score SMALLINT NOT NULL CHECK (score BETWEEN 1 AND 5),
+      score SMALLINT NOT NULL CHECK (score BETWEEN 1 AND 10),
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE (user_id, poem)
     )
+  `);
+  // Migrate old 1-5 constraint to 1-10 (safe to run repeatedly)
+  await db.query(`
+    DO $$
+    BEGIN
+      ALTER TABLE wl_rating DROP CONSTRAINT IF EXISTS wl_rating_score_check;
+      ALTER TABLE wl_rating ADD CONSTRAINT wl_rating_score_check CHECK (score BETWEEN 1 AND 10);
+    EXCEPTION WHEN others THEN NULL;
+    END $$
   `);
   tableReady = true;
 }
@@ -138,8 +147,8 @@ exports.handler = async (event) => {
       if (!poem) {
         return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'poem required' }) };
       }
-      if (!score || score < 1 || score > 5) {
-        return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'score must be 1-5' }) };
+      if (!score || score < 1 || score > 10) {
+        return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: 'score must be 1-10' }) };
       }
 
       await db.query(
